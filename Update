@@ -1,0 +1,483 @@
+	final boolean isCompletedAndClosed =rpServicesConstant.NDID_REQUEST_STATUS_COMPLETED.equalsIgnoreCase(req.getStatus())&& req.isClosed();
+							final boolean isPartialComplete =rpServicesConstant.NDID_REQUEST_STATUS_PARTIAL_COMPLETED.equalsIgnoreCase(req.getStatus());
+							final boolean hasIncomingData =req.getDataList() != null&& !req.getDataList().isEmpty();
+							if ((isCompletedAndClosed || isPartialComplete) && hasIncomingData) {
+							    try {
+							        boolean isYourData = false;
+							        if (req.getData_request_list() != null) {
+							            for (DataRequest dataRequest : req.getData_request_list()) {
+							                String serviceId = dataRequest.getService_id();
+							                if (serviceId != null&& serviceId.startsWith(rpServicesConstant.PRECONSENT_PREFIX)) {
+							                    isYourData = true;
+							                    break;
+							                }
+							            }
+							        }
+
+							        List<DataList> previousDataList = null;
+							        final String previousHistoryGuid =ndidRPTrans.getGuidTransHistTransData();
+							        if (ValidationInput.validateField(previousHistoryGuid)) {
+							            final NdidTransactionHistoryEMB historyEMB =new NdidTransactionHistoryEMB();
+							            final NdidTransactionHistory previousHistory =historyEMB.findNdidTransactionHistoryByGUID(previousHistoryGuid);
+							            if (previousHistory != null&& ValidationInput.validateField(previousHistory.getRequesterReqPayload())) {
+							                final RequestStatusTO previousRequest =(RequestStatusTO) jsonHelper.convJSONToObj(previousHistory.getRequesterReqPayload(),RequestStatusTO.class,true);
+							                if (previousRequest != null) {
+							                    previousDataList = previousRequest.getDataList();
+							                }
+							            }
+							        }
+							        for (DataList currentData : req.getDataList()) {
+							            boolean exists = false;
+							            if (previousDataList != null&& !previousDataList.isEmpty()) {
+							                for (DataList previousData : previousDataList) {
+							                    if (currentData.getService_id().equalsIgnoreCase(previousData.getService_id())&& currentData.getSource_node_id().equalsIgnoreCase(previousData.getSource_node_id())) {
+							                        exists = true;
+							                        break;
+							                    }
+							                }
+							            }
+							            if (exists) {
+							            	logging.setLogDebug("Skip duplicate data. serviceId"+currentData.getService_id()+"sourceNodeId="+currentData.getSource_node_id());
+							                continue;
+							            }
+							            YourDataResponse currentResponse =(YourDataResponse) jsonHelper.convJSONToObj(currentData.getData(),YourDataResponse.class,true);
+
+							            if (currentResponse == null|| currentResponse.getSubIdentityList() == null|| currentResponse.getSubIdentityList().isEmpty()) {
+							                continue;
+							            }
+							            ConsentInsertRequest consentRequest =new ConsentInsertRequest();
+							            consentRequest.setRequestId(req.getRequest_id());
+							            consentRequest.setServiceId(currentData.getService_id());
+							            consentRequest.setSourceType(SourceType.DC);
+							            consentRequest.setSubIdentities(currentResponse.getSubIdentityList());
+							            consentRequest.setTokenJwt(currentResponse.getAuthorization());
+							            boolean saved =savePreConsentTokens(httpReq, consentRequest);
+							            if (!saved) {
+//							                isSuccess = false;
+//							                logger.error("Failed to save pre-consent token. serviceId={}, sourceNodeId={}",currentData.getService_id(),currentData.getSource_node_id());
+							                break;
+							            }
+							        }
+
+							    } catch (Exception e) {
+//							    	isSuccess = false;
+							        logging.setLoggerInfo(e.getMessage(),e.getStackTrace(),functionName);
+							    }
+							}
+
+
+package com.bbl.online.ndid.gateway.to.rp;
+
+import java.util.List;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+public class YourDataResponse {
+
+    @JsonProperty("sub_identity_list")
+    private List<ConsentSubIdentities> subIdentityList;
+
+    private String authorization;
+    
+
+	public List<ConsentSubIdentities> getSubIdentityList() {
+		return subIdentityList;
+	}
+
+	public void setSubIdentityList(List<ConsentSubIdentities> subIdentityList) {
+		this.subIdentityList = subIdentityList;
+	}
+
+	public String getAuthorization() {
+		return authorization;
+	}
+
+	public void setAuthorization(String authorization) {
+		this.authorization = authorization;
+	}
+}
+
+package com.bbl.online.ndid.gateway.to.rp;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+
+@JsonInclude(JsonInclude.Include.NON_NULL)
+@JsonPropertyOrder({
+    "source_node_id",
+    "service_id",
+// ----- For applying to ATTA Additional field -----
+    
+    "source_signature",
+    "signature_signing_algorithm",
+    "signature_signing_key_version",
+    
+ // ----- For applying to ATTA Additional field -----
+    "dataSalt",
+    "data_salt",
+    "data"
+})
+public class DataList {
+
+    @JsonProperty("source_node_id")
+    private String source_node_id;
+    @JsonProperty("service_id")
+    private String service_id;
+    @JsonProperty("dataSalt")
+    private String dataSalt;
+    @JsonProperty("data_salt")
+    private String data_salt;
+    @JsonProperty("data")
+    private String data;
+    
+  /* ----- For applying to ATTA Additional field ----- */
+    
+    @JsonProperty("source_signature")
+    private String sourceSignature;
+    
+    @JsonProperty("signature_signing_algorithm")
+    private String signatureSigningAlgorithm;
+
+    @JsonProperty("signature_signing_key_version")
+    private Integer signatureSigningKeyVersion;
+
+    /* ----- For applying to ATTA Additional field ----- */
+    
+    
+    @JsonProperty("source_node_id")
+	public String getSource_node_id() {
+		return source_node_id;
+	}
+    @JsonProperty("source_node_id")
+	public void setSource_node_id(String source_node_id) {
+		this.source_node_id = source_node_id;
+	}
+    @JsonProperty("service_id")
+	public String getService_id() {
+		return service_id;
+	}
+    @JsonProperty("service_id")
+	public void setService_id(String service_id) {
+		this.service_id = service_id;
+	}
+    @JsonProperty("dataSalt")
+	public String getDataSalt() {
+		return dataSalt;
+	}
+    @JsonProperty("dataSalt")
+	public void setDataSalt(String dataSalt) {
+		this.dataSalt = dataSalt;
+	}
+    @JsonProperty("data_salt")
+	public String getData_salt() {
+		return data_salt;
+	}
+    @JsonProperty("data_salt")
+	public void setData_salt(String data_salt) {
+		this.data_salt = data_salt;
+	}
+	@JsonProperty("data")
+	public String getData() {
+		return data;
+	}
+    @JsonProperty("data")
+	public void setData(String data) {
+		this.data = data;
+	}
+ // ----- For applying to ATTA Additional field -----
+    
+    /* setter*/
+    @JsonProperty("source_signature")
+    public void setSourceSignature(String sourceSignature ) {
+    	this.sourceSignature = sourceSignature;
+    }
+    
+    @JsonProperty("signature_signing_algorithm")
+    public void setSignatureSigningAlgorithm(String signatureSigningAlgorithm ) {
+	   	this.signatureSigningAlgorithm = signatureSigningAlgorithm;
+   	}
+    		
+    @JsonProperty("signature_signing_key_version")
+    public void setSignatureSigningKeyVersion(Integer signatureSigningKeyVersion) {
+    	this.signatureSigningKeyVersion = signatureSigningKeyVersion;
+    }
+    /* getter*/
+    @JsonProperty("source_signature")
+    public String getSourceSignature() { 
+    	return sourceSignature; 
+    }
+
+    @JsonProperty("signature_signing_algorithm")
+    public String getSignatureSigningAlgorithm() { 
+    	return signatureSigningAlgorithm; 
+    }
+    @JsonProperty("signature_signing_key_version")
+    public Integer getSignatureSigningKeyVersion() { 
+    	return signatureSigningKeyVersion; 
+    }
+    /* -------------------------------------- */
+}
+
+package com.bbl.online.ndid.gateway.to.rp;
+
+import java.util.List;
+
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonPropertyOrder;
+
+@JsonPropertyOrder({
+	"node_id",
+	"type",
+	"request_id",
+	"requester_node_id",
+	"mode",
+	"request_message_hash",
+	"min_ial",
+	"min_aal",
+	"min_idp",
+	"idp_id_list",
+	"response_list",
+	"data_request_list",
+	"request_timeout",
+	"closed",
+	"timed_out",
+	"request_type",
+	"status",
+	"block_height",
+	"creation_block_height",
+	"reference_id",
+	"success",
+	"data_list",
+	"error"
+})
+
+@JsonIgnoreProperties(ignoreUnknown = true)
+public class RequestStatusTO {
+	@JsonProperty("node_id")
+	private String node_id;
+	@JsonProperty("type")
+	private String type;
+	@JsonProperty("request_id")
+	private String request_id;
+	@JsonProperty("requester_node_id")
+	private String requester_node_id;
+	@JsonProperty("mode")
+	private int mode;
+	@JsonProperty("request_message_hash")
+	private String request_message_hash;
+	@JsonProperty("min_ial")
+	private double min_ial;
+	@JsonProperty("min_aal")
+	private double min_aal;
+	@JsonProperty("min_idp")
+	private int min_idp;
+	@JsonProperty("idp_id_list")
+	private List<String> idp_id_list;
+	@JsonProperty("response_list")
+	private List<IDPResponse> response_list;
+	@JsonProperty("data_request_list")
+	private List<DataRequest> data_request_list;
+	@JsonProperty("request_timeout")
+	private long request_timeout;
+	@JsonProperty("closed")
+	private boolean closed;
+	@JsonProperty("timed_out")
+	private boolean timed_out;
+	@JsonProperty("status")
+	private String status;
+	@JsonProperty("block_height")
+	private String block_height;
+	@JsonProperty("data_list")
+	private List<DataList> dataList;
+	@JsonProperty("reference_id")
+	private String reference_id;
+	@JsonProperty("creation_block_height")
+	private String creation_block_height;
+	@JsonProperty("success")
+	private boolean success;
+	@JsonProperty("error")
+	private Error error;
+	@JsonProperty("request_type")
+	private String request_type;
+	
+	@JsonProperty("data_list")
+	public List<DataList> getDataList() {
+		return dataList;
+	}
+	public void setDataList(List<DataList> dataList) {
+		this.dataList = dataList;
+	}
+	@JsonProperty("reference_id")
+	public String getReference_id() {
+		return reference_id;
+	}
+	public void setReference_id(String reference_id) {
+		this.reference_id = reference_id;
+	}
+	@JsonProperty("creation_block_height")
+	public String getCreation_block_height() {
+		return creation_block_height;
+	}
+	public void setCreation_block_height(String creation_block_height) {
+		this.creation_block_height = creation_block_height;
+	}
+	@JsonProperty("success")
+	public boolean isSuccess() {
+		return success;
+	}
+	public void setSuccess(boolean success) {
+		this.success = success;
+	}
+	@JsonProperty("error")
+	public Error getError() {
+		return error;
+	}
+	public void setError(Error error) {
+		this.error = error;
+	}
+	@JsonProperty("node_id")
+	public String getNode_id() {
+		return node_id;
+	}
+	public void setNode_id(String node_id) {
+		this.node_id = node_id;
+	}
+	@JsonProperty("type")
+	public String getType() {
+		return type;
+	}
+	public void setType(String type) {
+		this.type = type;
+	}
+	@JsonProperty("request_id")
+	public String getRequest_id() {
+		return request_id;
+	}
+	public void setRequest_id(String request_id) {
+		this.request_id = request_id;
+	}
+	@JsonProperty("requester_node_id")
+	public String getRequester_node_id() {
+		return requester_node_id;
+	}
+	public void setRequester_node_id(String requester_node_id) {
+		this.requester_node_id = requester_node_id;
+	}
+	@JsonProperty("mode")
+	public int getMode() {
+		return mode;
+	}
+	public void setMode(int mode) {
+		this.mode = mode;
+	}
+	@JsonProperty("request_message_hash")
+	public String getRequest_message_hash() {
+		return request_message_hash;
+	}
+	public void setRequest_message_hash(String request_message_hash) {
+		this.request_message_hash = request_message_hash;
+	}
+	@JsonProperty("min_ial")
+	public double getMin_ial() {
+		return min_ial;
+	}
+	public void setMin_ial(double min_ial) {
+		this.min_ial = min_ial;
+	}
+	@JsonProperty("min_aal")
+	public double getMin_aal() {
+		return min_aal;
+	}
+	public void setMin_aal(double min_aal) {
+		this.min_aal = min_aal;
+	}
+	@JsonProperty("min_idp")
+	public int getMin_idp() {
+		return min_idp;
+	}
+	public void setMin_idp(int min_idp) {
+		this.min_idp = min_idp;
+	}
+	@JsonProperty("idp_id_list")
+	public List<String> getIdp_id_list() {
+		return idp_id_list;
+	}
+	public void setIdp_id_list(List<String> idp_id_list) {
+		this.idp_id_list = idp_id_list;
+	}
+	@JsonProperty("response_list")
+	public List<IDPResponse> getResponse_list() {
+		return response_list;
+	}
+	public void setResponse_list(List<IDPResponse> response_list) {
+		this.response_list = response_list;
+	}
+	@JsonProperty("data_request_list")
+	public List<DataRequest> getData_request_list() {
+		return data_request_list;
+	}
+	public void setData_request_list(List<DataRequest> data_request_list) {
+		this.data_request_list = data_request_list;
+	}
+	@JsonProperty("request_timeout")
+	public long getRequest_timeout() {
+		return request_timeout;
+	}
+	public void setRequest_timeout(long request_timeout) {
+		this.request_timeout = request_timeout;
+	}
+	@JsonProperty("closed")
+	public boolean isClosed() {
+		return closed;
+	}
+	public void setClosed(boolean closed) {
+		this.closed = closed;
+	}
+	@JsonProperty("timed_out")
+	public boolean isTimed_out() {
+		return timed_out;
+	}
+	public void setTimed_out(boolean timed_out) {
+		this.timed_out = timed_out;
+	}
+	@JsonProperty("status")
+	public String getStatus() {
+		return status;
+	}
+	public void setStatus(String status) {
+		this.status = status;
+	}
+	@JsonProperty("block_height")
+	public String getBlock_height() {
+		return block_height;
+	}
+	public void setBlock_height(String block_height) {
+		this.block_height = block_height;
+	}
+
+	@JsonProperty("request_type")
+	public String getRequest_type() {
+		return request_type;
+	}
+
+	@JsonProperty("request_type")
+	public void setRequest_type(String request_type) {
+		this.request_type = request_type;
+	}
+	
+	@Override
+	public String toString() {
+		return "RequestStatusTO [node_id=" + node_id + ", type=" + type + ", request_id=" + request_id
+				+ ", requester_node_id=" + requester_node_id + ", mode=" + mode + ", request_message_hash="
+				+ request_message_hash + ", min_ial=" + min_ial + ", min_aal=" + min_aal + ", min_idp=" + min_idp
+				+ ", idp_id_list=" + idp_id_list + ", response_list=" + response_list + ", data_request_list="
+				+ data_request_list + ", request_timeout=" + request_timeout + ", closed=" + closed + ", timed_out="
+				+ timed_out + ", status=" + status + ", block_height=" + block_height + ", dataList=" + dataList
+				+ ", reference_id=" + reference_id + ", creation_block_height=" + creation_block_height + ", success="
+				+ success + ", error=" + error + ", request_type=" + request_type + "]";
+	}
+	
+	
+}
