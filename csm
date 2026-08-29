@@ -1,0 +1,60 @@
+public boolean savePreConsentTokens(final @Context HttpServletRequest httpRequest,ConsentInsertRequest consentRequest) {
+
+	        final String functionName = "savePreConsentTokens";
+	        final String serviceName = "savePreConsentTokens";
+	        final WebHelper webHelper = new WebHelper();
+		    final String sender = httpRequest.getServerName();
+		    final String receiver = rpServicesConstant.NODE_RP;
+	        final String senderIp = webHelper.getRealIPAddress(httpRequest);
+	        final String receiverIp = new TransactionHistoryHelper().getIPAddressOfIDP();
+	        final TransactionHistoryHelper transHistoryHelper = new TransactionHistoryHelper();
+			final String header = CommonFunction.getLogHeader(functionName, serviceName, sender, senderIp, receiver, receiverIp,null);
+	        JSONHelper jsonHelper = new JSONHelper(header);
+	        boolean isComplete = false;
+	        logging.setLogInfo("--------------------- Start " + functionName + "------------------------");
+
+	        if (consentRequest == null) {
+	            logging.setLogInfo("Invalid insertConsentRequest : null");
+	        } else {
+	            if ("Y".equalsIgnoreCase(rpServicesConstant.IS_MOCKUP)) {
+	                logging.setLogInfo("This is Mockup mode");
+	                isComplete = true;
+	            } else {
+	            	final String requestId = consentRequest.getRequestId();
+	                try {           
+	                    String reqPayloadStr = jsonHelper.convObjToJSON(consentRequest);
+	                    WSCallOutService wsCalloutService = new WSCallOutService("");
+	                    WSRequestTO wsReq = new WSRequestTO();
+	                    wsReq.setMethod("POST");
+	                    wsReq.setReqURL(rpServicesConstant.SAVE_PRECONSENT_TOKEN);
+	                    wsReq.setContentType("application/json");
+	                    wsReq.setPayload(reqPayloadStr);
+
+	                    logging.setLogInfo("Calling URL: " + wsReq.getReqURL());
+	                    final Timestamp requestDate = new Timestamp(System.currentTimeMillis());
+	                    transHistoryHelper.createTransactionHistoryForRequesterRequest(null, rpServicesConstant.NODE_RP, functionName, null, null, null, requestId, rpServicesConstant.NODE_RP, rpServicesConstant.NODE_CONSENT_MGMT, requestDate, reqPayloadStr, null, senderIp, receiverIp, functionName);
+
+	                    final WSResponseTO wsResp = wsCalloutService.callWebServices(wsReq);
+
+	                    if (wsResp == null) {
+	                        logging.setLogInfo("Response from ConsentManagement is null(wsResp is null)");
+	                    } else {
+	                        logging.setLogInfo("InsertConsent call success. httpCode = " + wsResp.getHttpRetCode());
+
+	                        preconsentResponse insertConsentResp = null;
+	                        insertConsentResp = (preconsentResponse) jsonHelper.convJSONToObj(reqPayloadStr,preconsentResponse.class,true);
+	                        isComplete = insertConsentResp.isSuccess();
+	                    }
+
+	                    final Timestamp responseDate = new Timestamp(System.currentTimeMillis());
+	                    transHistoryHelper.createTransactionHistoryForRequesterResponse(null, rpServicesConstant.NODE_RP, functionName, null, null, null, requestId, rpServicesConstant.NODE_CONSENT_MGMT, rpServicesConstant.NODE_RP, responseDate, (wsResp != null ? wsResp.getHttpRetCode() : null), null, (wsResp != null ? wsResp.getPayLoad() : null), senderIp, receiverIp, functionName);
+
+	                } catch (Exception e) {
+	                    logging.setLoggerError(e.getMessage(), e.getStackTrace(), functionName);
+	                }
+	            }
+
+	        }
+
+	        return isComplete;
+	    }
