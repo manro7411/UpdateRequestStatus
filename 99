@@ -1,0 +1,154 @@
+							final boolean isCompletedAndClosed = rpServicesConstant.NDID_REQUEST_STATUS_COMPLETED.equalsIgnoreCase(req.getStatus()) && req.isClosed();
+							final boolean isPartialComplete = rpServicesConstant.NDID_REQUEST_STATUS_PARTIAL_COMPLETED.equalsIgnoreCase(req.getStatus());
+							final boolean isTimeoutAndPartialComplete = rpServicesConstant.NDID_REQUEST_STATUS_PARTIAL_COMPLETED.equalsIgnoreCase(req.getStatus()) && req.isTimed_out(); 
+							final boolean hasIncomingData = req.getDataList() != null && !req.getDataList().isEmpty();
+							
+							if((isCompletedAndClosed || isPartialComplete || isTimeoutAndPartialComplete) && hasIncomingData) {
+								logging.setLogDebug("Request is eligible for pre-consent processing.");
+								try {
+									/* Process incoming requests and validate YourData services */ 
+									for(DataList currentData : req.getDataList()) {
+										if(currentData == null) {
+											continue;
+										}
+										final String currentServiceId = currentData.getService_id();
+										final boolean isPreconsent = !ValidationInput.validateField(currentServiceId) && currentServiceId.startsWith(rpServicesConstant.PRECONSENT_PREFIX);
+										if(isPreconsent) {							
+											final String previousHistoryGuid = ndidRPTrans.getGuidTransHistTransData();
+											if(ValidationInput.validateField(previousHistoryGuid)) {
+												logging.setLogDebug("No previous request history found. Saving incoming pre-consent data.");
+												YourDataResponse currentResponse = (YourDataResponse) jsonHelper.convJSONToObj(currentData.getData(),YourDataResponse.class,true);
+												ConsentInsertRequest consentRequest = buildPreConsentRequest(requestID,currentServiceId,currentResponse);
+												boolean saved = savePreConsentTokens(httpReq,consentRequest);
+												if(!saved) {
+													logging.setLogDebug("Failed to save PreConsent");
+													break;
+												}											
+											}else {
+												logging.setLogDebug("request history found. ExploreGUID Transaction history");
+												final NdidTransactionHistoryEMB historyEMB = new NdidTransactionHistoryEMB();
+												final NdidTransactionHistory previousHistory = historyEMB.findNdidTransactionHistoryByGUID(previousHistoryGuid);
+												List<DataList> previousDataList = null;											
+												if(previousHistory != null && !ValidationInput.validateField(previousHistory.getRequesterReqPayload())){
+													final RequestStatusTO previousRequest = (RequestStatusTO) jsonHelper.convJSONToObj(previousHistory.getRequesterReqPayload(), RequestStatusTO.class,true);
+													if(previousRequest != null) {
+														previousDataList = previousRequest.getDataList();
+													}
+												}											
+												boolean isDuplicate = false;
+												if(previousDataList != null && !previousDataList.isEmpty()) {
+													for(DataList previousData : previousDataList) {
+														if(previousData == null) {
+															continue;
+														}
+														final String previousServiceId = previousData.getService_id();
+														final String previousSourceNodeId = previousData.getSource_node_id();													
+														boolean sameServiceId = currentData.getService_id().equalsIgnoreCase(previousServiceId);
+														boolean sameSourceNodeId = currentData.getSource_node_id().equalsIgnoreCase(previousSourceNodeId);												
+								                        logging.setLogDebug("Comparing incoming and"+ ", sameServiceId="+ sameServiceId+ ", sameSourceNodeId="+ sameSourceNodeId);
+														if (sameServiceId && sameSourceNodeId) {
+															isDuplicate = true;
+															break;
+														}													
+													}
+												}
+												if(isDuplicate) {
+													logging.setLogDebug("Skip duplicate pre-consent data.");
+													continue;
+												}
+												logging.setLogDebug("It isn't duplicated, Saving incoming pre-consent data.");
+												YourDataResponse currentResponse = (YourDataResponse) jsonHelper.convJSONToObj(currentData.getData(),YourDataResponse.class,true);
+												ConsentInsertRequest consentRequest = buildPreConsentRequest(requestID,currentServiceId,currentResponse);			
+												boolean saved = savePreConsentTokens(httpReq,consentRequest);
+												if(!saved) {
+													logging.setLogDebug("Failed to save PreConsent");
+													break;
+												}
+											}	
+										}
+									}			
+								}catch(Exception e) {
+									logging.setLoggerInfo(e.getMessage(), e.getStackTrace(), functionName);			
+								}
+							}
+							logging.setLogDebug("---------- END ConsentManagement section : Ratchanon Traitiprat ----------");
+
+
+              	public boolean savePreConsentTokens(final @Context HttpServletRequest httpRequest,ConsentInsertRequest consentRequest) {
+	        final String functionName = "savePreConsentTokens";
+	        final String serviceName = "savePreConsentTokens";
+	        final WebHelper webHelper = new WebHelper();
+		    final String sender = httpRequest.getServerName();
+		    final String receiver = rpServicesConstant.NODE_RP;
+	        final String senderIp = webHelper.getRealIPAddress(httpRequest);
+	        final String receiverIp = new TransactionHistoryHelper().getIPAddressOfIDP();
+	        final TransactionHistoryHelper transHistoryHelper = new TransactionHistoryHelper();
+			final String header = CommonFunction.getLogHeader(functionName, serviceName, sender, senderIp, receiver, receiverIp,null);
+	        JSONHelper jsonHelper = new JSONHelper(header);
+	        boolean isComplete = false;
+	        logging.setLogInfo("--------------------- Start " + functionName + "------------------------");
+
+	        if (consentRequest == null) {
+	            logging.setLogInfo("Invalid insertConsentRequest : null");
+	        } else {
+	            if ("Y".equalsIgnoreCase(rpServicesConstant.IS_MOCKUP)) {
+		        	try {
+		        		String reqPayloadStr = jsonHelper.convObjToJSON(consentRequest);
+		        		logging.setLogDebug("Mockup Request Payload : " + reqPayloadStr);	        		
+		        	}catch(Exception e) {
+	                    logging.setLoggerError(e.getMessage(), e.getStackTrace(), functionName);
+		        	}
+	                logging.setLogInfo("This is Mockup mode");
+	                isComplete = true;
+	            } else {
+	            	final String requestId = consentRequest.getRequestId();
+	                try {           
+	                    String reqPayloadStr = jsonHelper.convObjToJSON(consentRequest);
+	                    WSCallOutService wsCalloutService = new WSCallOutService("");
+	                    WSRequestTO wsReq = new WSRequestTO();
+	                    wsReq.setMethod("POST");
+	                    wsReq.setReqURL(rpServicesConstant.SAVE_PRECONSENT_TOKEN);
+	                    wsReq.setContentType("application/json");
+	                    wsReq.setPayload(reqPayloadStr);
+
+	                    logging.setLogInfo("Calling URL: " + wsReq.getReqURL());
+	                    final Timestamp requestDate = new Timestamp(System.currentTimeMillis());
+	                    transHistoryHelper.createTransactionHistoryForRequesterRequest(null, rpServicesConstant.NODE_RP, functionName, null, null, null, requestId, rpServicesConstant.NODE_RP, rpServicesConstant.NODE_CONSENT_MGMT, requestDate, reqPayloadStr, null, senderIp, receiverIp, functionName);
+
+	                    final WSResponseTO wsResp = wsCalloutService.callWebServices(wsReq);
+
+	                    if (wsResp == null) {
+	                        logging.setLogInfo("Response from ConsentManagement is null(wsResp is null)");
+	                    } else {
+	                        logging.setLogInfo("InsertConsent call success. httpCode = " + wsResp.getHttpRetCode());
+
+	                        preconsentResponse insertConsentResp = null;
+	                        insertConsentResp = (preconsentResponse) jsonHelper.convJSONToObj(reqPayloadStr,preconsentResponse.class,true);
+	                        isComplete = insertConsentResp.isSuccess();
+	                    }
+
+	                    final Timestamp responseDate = new Timestamp(System.currentTimeMillis());
+	                    transHistoryHelper.createTransactionHistoryForRequesterResponse(null, rpServicesConstant.NODE_RP, functionName, null, null, null, requestId, rpServicesConstant.NODE_CONSENT_MGMT, rpServicesConstant.NODE_RP, responseDate, (wsResp != null ? wsResp.getHttpRetCode() : null), null, (wsResp != null ? wsResp.getPayLoad() : null), senderIp, receiverIp, functionName);
+
+	                } catch (Exception e) {
+	                    logging.setLoggerError(e.getMessage(), e.getStackTrace(), functionName);
+	                }
+	            }
+
+	        }
+
+	        return isComplete;
+	    }
+
+
+      private ConsentInsertRequest buildPreConsentRequest(final String requestId,final String serviceId,final YourDataResponse currentResponse) {
+	    ConsentInsertRequest consentRequest = new ConsentInsertRequest();
+	    consentRequest.setRequestId(requestId);
+	    consentRequest.setServiceId(serviceId);
+	    consentRequest.setSourceType(SourceType.DC);
+	    if (currentResponse != null) {
+	        consentRequest.setSubIdentities(currentResponse.getSubIdentityList());
+	        consentRequest.setTokenJwt(currentResponse.getAuthorization());
+	    }
+	    return consentRequest;
+	}
